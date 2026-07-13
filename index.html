@@ -1274,6 +1274,7 @@
       power: { emoji: '💥', label: 'Missile Power' },
       energy: { emoji: '🔋', label: 'Reload Speed' },
       fuel: { emoji: '⛽', label: 'Tank Speed' },
+      range: { emoji: '🎯', label: 'Missile Range' },
       heart: { emoji: '❤️', label: 'Max HP' },
       gold: { emoji: '🪙', label: 'Gold' }
     };
@@ -1295,6 +1296,8 @@
     const MISSILE_SPEED_STACK_BONUS = 0.13;
     const MISSILE_DAMAGE_BASE = 1;
     const MISSILE_MAX_LIFE = 4000;
+    const RANGE_BASE_BLOCKS = 5;
+    const RANGE_STACK_BLOCKS = 2;
 
     const FIRE_INTERVAL_BASE = 950;
     const ENERGY_STACK_BONUS = 0.18;
@@ -2067,7 +2070,7 @@
 
           gold: 0,
           rank: 0,
-          upgrades: { speed: 0, power: 0, energy: 0, fuel: 0, heart: 0 },
+          upgrades: { speed: 0, power: 0, energy: 0, fuel: 0, range: 0, heart: 0 },
 
           joystickActive: false,
           isJoystickDragging: false,
@@ -2286,7 +2289,7 @@
           <div class="item-stat-row">
             <span class="item-stat-icon">${ITEM_TYPES[key].emoji}</span>
             <span class="item-stat-label">${ITEM_TYPES[key].label}</span>
-            <span class="item-stat-value" id="item-val-p${i}-${key}">${key === 'power' ? 'x1' : 0}</span>
+            <span class="item-stat-value" id="item-val-p${i}-${key}">${key === 'power' ? 'x1' : (key === 'range' ? RANGE_BASE_BLOCKS : 0)}</span>
           </div>
         `).join('');
 
@@ -2595,12 +2598,14 @@
     function fireMissile(p) {
       const speed = MISSILE_SPEED_BASE * (1 + MISSILE_SPEED_STACK_BONUS * p.upgrades.speed);
       const power = MISSILE_DAMAGE_BASE * (1 + p.upgrades.power); // 스택마다 2배, 3배... 배수로 증가
+      const maxDist = (RANGE_BASE_BLOCKS + RANGE_STACK_BLOCKS * p.upgrades.range) * OBSTACLE_CELL;
       const noseX = p.x + Math.cos(p.angle) * (TANK_RADIUS + 6);
       const noseY = p.y + Math.sin(p.angle) * (TANK_RADIUS + 6);
       missiles.push({
         x: noseX, y: noseY,
         vx: Math.cos(p.angle) * speed, vy: Math.sin(p.angle) * speed,
         team: p.team, ownerId: p.id, power, life: 0,
+        dist: 0, maxDist, speed,
         color: (gameMode === 'battle') ? TEAM_COLORS[p.team].color : p.color
       });
       p.fireFlashTimer = 120;
@@ -2761,7 +2766,9 @@
               if (cur < MAX_UPGRADE_STACK) p.upgrades[it.type] = cur + 1;
               pickupText = (it.type === 'power')
                 ? `${ITEM_TYPES[it.type].label} x${1 + p.upgrades[it.type]}`
-                : `${ITEM_TYPES[it.type].label} +1`;
+                : (it.type === 'range')
+                  ? `${ITEM_TYPES[it.type].label} ${RANGE_BASE_BLOCKS + RANGE_STACK_BLOCKS * p.upgrades[it.type]} Blocks`
+                  : `${ITEM_TYPES[it.type].label} +1`;
             }
             spawnFloatingText(ax, ay - 24, pickupText, p.color);
             sound.playItemPickup();
@@ -2798,11 +2805,12 @@
         m.x += m.vx;
         m.y += m.vy;
         m.life += dt;
+        m.dist += m.speed;
         let dead = false;
 
         if (m.x < boardOffsetX - 30 || m.x > boardOffsetX + boardWidth + 30 ||
           m.y < boardOffsetY - 30 || m.y > boardOffsetY + boardHeight + 30 ||
-          m.life > MISSILE_MAX_LIFE) {
+          m.life > MISSILE_MAX_LIFE || m.dist >= m.maxDist) {
           dead = true;
         }
 
@@ -3013,6 +3021,8 @@
           text = `x${1 + p.upgrades[key]}`;
         } else if (key === 'heart') {
           text = `+${HEART_HP_BONUS}`; // 힐량은 고정값 (한도는 늘어나지 않음)
+        } else if (key === 'range') {
+          text = `${RANGE_BASE_BLOCKS + RANGE_STACK_BLOCKS * p.upgrades[key]}`; // 현재 사거리(블록 단위)
         } else {
           text = `${p.upgrades[key]}`;
         }
