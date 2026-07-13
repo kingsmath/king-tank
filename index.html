@@ -1296,7 +1296,7 @@
     const MISSILE_SPEED_STACK_BONUS = 0.13;
     const MISSILE_DAMAGE_BASE = 1;
     const MISSILE_MAX_LIFE = 4000;
-    const RANGE_BASE_BLOCKS = 5;
+    const RANGE_BASE_BLOCKS = 3;
     const RANGE_STACK_BLOCKS = 2;
 
     const FIRE_INTERVAL_BASE = 950;
@@ -1309,6 +1309,14 @@
     const OBSTACLE_CELL = 58;
     const ITEM_DROP_CHANCE = 0.5;
     const RANDOM_ITEM_INTERVAL = 5000;
+
+    // 골드 그랩 모드 왕관 스폰 규칙: 총 19개 중 9개는 중앙에서, 10개는 위/아래 쌍(5회 x 2개)으로
+    // 동시에 스폰되어 어느 한쪽 팀에게 유리하게 치우치지 않고 공평하게 분배된다.
+    const TOTAL_CROWN_CAP = 19;
+    const CROWN_CENTER_TOTAL = 9;
+    const CROWN_SIDE_PAIR_TOTAL = 5;
+    const CROWN_CENTER_INTERVAL = 7000;
+    const CROWN_SIDE_INTERVAL = 10000;
 
     let GRID_COLS = 50;
     let GRID_ROWS = 25;
@@ -1339,7 +1347,9 @@
     let floatingTexts = [];
     let itemSpawnTimer = 0;
     let goldMineTimer = 0;
-    let goldFieldTimer = 0;
+    let goldSideTimer = 0;
+    let goldCenterSpawnedCount = 0;
+    let goldSidePairsSpawnedCount = 0;
     let goldCountdownTimer = 15;
     let goldCountdownActive = false;
     let goldCountdownTeam = null;
@@ -1909,7 +1919,9 @@
       floatingTexts = [];
       itemSpawnTimer = 0;
       goldMineTimer = 0;
-      goldFieldTimer = 0;
+      goldSideTimer = 0;
+      goldCenterSpawnedCount = 0;
+      goldSidePairsSpawnedCount = 0;
       goldCountdownTimer = 15;
       goldCountdownActive = false;
       goldCountdownTeam = null;
@@ -2152,21 +2164,33 @@
 
     function spawnGoldAtCenter() {
       const radius = 28;
-      // 중앙에서 완벽하게 겹치지 않고 약간의 편차(흩어짐)를 주면 더 자연스럽다.
-      const px = boardWidth / 2 + (Math.random() - 0.5) * 40;
-      const py = boardHeight / 2 + (Math.random() - 0.5) * 40;
+      // 이미 중앙에 떠 있는 왕관과 겹치지 않도록 빈 자리를 찾아 스폰한다.
+      let attempts = 0;
+      let px = boardWidth / 2, py = boardHeight / 2;
+      while (attempts < 60) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.random() * 90;
+        px = boardWidth / 2 + Math.cos(angle) * dist;
+        py = boardHeight / 2 + Math.sin(angle) * dist;
+
+        let overlap = false;
+        for (const it of items) {
+          if (Math.hypot(px - it.x, py - it.y) < radius * 2 + 12) { overlap = true; break; }
+        }
+        if (!overlap) break;
+        attempts++;
+      }
       items.push({ x: px, y: py, radius, type: 'gold' });
       // 금 광산 스폰 입자 이펙트
       spawnParticles(boardOffsetX + px, boardOffsetY + py, 8, 'item');
     }
 
-    function spawnRandomFieldGold() {
+    function findOpenGoldSpot(minY, maxY, radius) {
       let attempts = 0;
-      let rx = boardWidth / 2, ry = boardHeight / 2;
-      const radius = 28;
+      let rx = boardWidth / 2, ry = (minY + maxY) / 2;
       while (attempts < 60) {
         rx = 30 + Math.random() * (boardWidth - 60);
-        ry = 30 + Math.random() * (boardHeight - 60);
+        ry = minY + Math.random() * (maxY - minY);
 
         let overlap = false;
         const blockers = obstacles.concat(bases);
@@ -2183,8 +2207,19 @@
         if (!overlap) break;
         attempts++;
       }
-      items.push({ x: rx, y: ry, radius, type: 'gold' });
-      spawnParticles(boardOffsetX + rx, boardOffsetY + ry, 6, 'item');
+      return { x: rx, y: ry };
+    }
+
+    // 위/아래 어느 한쪽에만 치우쳐 스폰되면 그 근처 팀이 유리해지므로,
+    // 항상 위쪽 한 개 + 아래쪽 한 개를 동시에 스폰해 공평하게 분배한다.
+    function spawnGoldSidePair() {
+      const radius = 28;
+      const topSpot = findOpenGoldSpot(30, boardHeight * 0.22, radius);
+      const bottomSpot = findOpenGoldSpot(boardHeight * 0.78, boardHeight - 30, radius);
+      [topSpot, bottomSpot].forEach(spot => {
+        items.push({ x: spot.x, y: spot.y, radius, type: 'gold' });
+        spawnParticles(boardOffsetX + spot.x, boardOffsetY + spot.y, 6, 'item');
+      });
     }
 
     function getTotalGoldInGame() {
@@ -2218,6 +2253,48 @@
         attempts++;
       }
       spawnItemAt(rx, ry);
+    }
+
+    // 죽은 자리 주변에 아이템을 흩뿌릴 때 서로 겹치지 않도록 자리를 찾는다.
+    // 이미 놓인 아이템이 많아질수록 탐색 반경을 조금씩 넓혀 자연스럽게 바깥으로 퍼지게 한다.
+    function scatterItemsAround(originX, originY, dropTypes) {
+      if (dropTypes.length === 0) return;
+      const radius = 28;
+      const minSep = radius * 1.5;
+      const placed = [];
+      dropTypes.forEach((type, idx) => {
+        const searchRadius = 45 + idx * 10;
+        let spot = null;
+        for (let attempt = 0; attempt < 40; attempt++) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 15 + Math.random() * searchRadius;
+          const rx = Math.max(25, Math.min(boardWidth - 25, originX + Math.cos(angle) * dist));
+          const ry = Math.max(25, Math.min(boardHeight - 25, originY + Math.sin(angle) * dist));
+
+          let overlap = false;
+          for (const p of placed) {
+            if (Math.hypot(rx - p.x, ry - p.y) < minSep) { overlap = true; break; }
+          }
+          if (!overlap) { spot = { x: rx, y: ry }; break; }
+          if (!spot) spot = { x: rx, y: ry };
+        }
+        placed.push(spot);
+        items.push({ x: spot.x, y: spot.y, radius, type });
+      });
+    }
+
+    // 격추당한 플레이어는 능력치를 모두 잃고, 보유하고 있던 왕관과 먹었던 아이템들을
+    // 죽은 자리 주변에 겹치지 않게 넓게 떨어뜨린다.
+    function dropPlayerInventory(p) {
+      const dropTypes = [];
+      const goldCount = p.gold || 0;
+      for (let g = 0; g < goldCount; g++) dropTypes.push('gold');
+      Object.keys(p.upgrades).forEach(key => {
+        for (let k = 0; k < p.upgrades[key]; k++) dropTypes.push(key);
+        p.upgrades[key] = 0;
+      });
+      p.gold = 0;
+      scatterItemsAround(p.x - boardOffsetX, p.y - boardOffsetY, dropTypes);
     }
 
     /* =========================================================================
@@ -2260,7 +2337,7 @@
         const roleMessage = document.createElement('div');
         roleMessage.className = 'role-message';
         roleMessage.style.color = roleColor;
-        roleMessage.textContent = isSurvival ? 'Stay Alive!' : 'Defend the Base!';
+        roleMessage.textContent = isSurvival ? 'Stay Alive!' : '👑 왕관을 먹어라!';
         col.appendChild(roleMessage);
 
         const body = document.createElement('div');
@@ -2882,22 +2959,8 @@
                 spawnParticles(p.x, p.y, 18, 'explosion');
                 sound.playExplosion();
 
-                // 들고 있던 금 모두 드랍 (골드 그랩 모드)
-                if (p.gold && p.gold > 0) {
-                  const dropCount = p.gold;
-                  p.gold = 0;
-                  for (let g = 0; g < dropCount; g++) {
-                    const angle = Math.random() * Math.PI * 2;
-                    const dist = 15 + Math.random() * 45;
-                    // 캔버스 기준 좌표(p.x, p.y)에서 보드 기준 좌표로 역산하여 스폰
-                    const rx = (p.x - boardOffsetX) + Math.cos(angle) * dist;
-                    const ry = (p.y - boardOffsetY) + Math.sin(angle) * dist;
-                    // 맵 테두리를 벗어나지 않게 클램핑
-                    const clampedX = Math.max(25, Math.min(boardWidth - 25, rx));
-                    const clampedY = Math.max(25, Math.min(boardHeight - 25, ry));
-                    items.push({ x: clampedX, y: clampedY, radius: 28, type: 'gold' });
-                  }
-                }
+                // 격추당하면 능력치가 모두 초기화되고, 보유한 왕관/아이템이 죽은 자리 주변에 흩어진다
+                dropPlayerInventory(p);
               } else {
                 spawnParticles(p.x, p.y, 5, 'hit');
                 sound.playBaseHit();
@@ -2916,21 +2979,23 @@
         spawnRandomFieldItem();
       }
 
-      // 금 광산 및 필드 금 스폰 (골드 그랩 모드 전용, 전체 금 개수 19개 제한)
+      // 왕관 스폰 (골드 그랩 모드 전용): 총 19개 중 9개는 중앙에서, 10개는 위/아래 쌍(5회)으로 공평하게 분배
       if (gameMode === 'battle') {
         goldMineTimer += dt;
-        if (goldMineTimer >= 5500) {
-          goldMineTimer -= 5500;
-          if (getTotalGoldInGame() < 19) {
+        if (goldMineTimer >= CROWN_CENTER_INTERVAL) {
+          goldMineTimer -= CROWN_CENTER_INTERVAL;
+          if (goldCenterSpawnedCount < CROWN_CENTER_TOTAL && getTotalGoldInGame() < TOTAL_CROWN_CAP) {
             spawnGoldAtCenter();
+            goldCenterSpawnedCount++;
           }
         }
 
-        goldFieldTimer += dt;
-        if (goldFieldTimer >= 6000) {
-          goldFieldTimer -= 6000;
-          if (getTotalGoldInGame() < 19) {
-            spawnRandomFieldGold();
+        goldSideTimer += dt;
+        if (goldSideTimer >= CROWN_SIDE_INTERVAL) {
+          goldSideTimer -= CROWN_SIDE_INTERVAL;
+          if (goldSidePairsSpawnedCount < CROWN_SIDE_PAIR_TOTAL && getTotalGoldInGame() + 2 <= TOTAL_CROWN_CAP) {
+            spawnGoldSidePair();
+            goldSidePairsSpawnedCount++;
           }
         }
       }
@@ -2982,20 +3047,8 @@
                 spawnParticles(p.x, p.y, 18, 'explosion');
                 sound.playExplosion();
 
-                // 들고 있던 금 드랍
-                if (p.gold && p.gold > 0) {
-                  const dropCount = p.gold;
-                  p.gold = 0;
-                  for (let g = 0; g < dropCount; g++) {
-                    const angle = Math.random() * Math.PI * 2;
-                    const dist = 15 + Math.random() * 45;
-                    const rx = (p.x - boardOffsetX) + Math.cos(angle) * dist;
-                    const ry = (p.y - boardOffsetY) + Math.sin(angle) * dist;
-                    const clampedX = Math.max(25, Math.min(boardWidth - 25, rx));
-                    const clampedY = Math.max(25, Math.min(boardHeight - 25, ry));
-                    items.push({ x: clampedX, y: clampedY, radius: 28, type: 'gold' });
-                  }
-                }
+                // 격추당하면 능력치가 모두 초기화되고, 보유한 왕관/아이템이 죽은 자리 주변에 흩어진다
+                dropPlayerInventory(p);
               }
             }
           } else {
