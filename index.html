@@ -608,8 +608,11 @@
 
     .halftime-msg {
       margin: 20px 0;
-      font-size: 1.1rem;
-      line-height: 1.6;
+      font-family: var(--font-display);
+      font-size: 3rem;
+      font-weight: 900;
+      line-height: 1.2;
+      letter-spacing: 2px;
       color: rgba(255, 255, 255, 0.85);
     }
 
@@ -1005,8 +1008,8 @@
       <!-- Game Over overlay modal card (centered in game screen) -->
       <div id="gameover-overlay" class="glass-card">
         <h2>BATTLE OVER</h2>
-        <div class="halftime-msg" id="winner-announcement" style="font-size: 1.4rem; font-weight: 800; color: #ffcc00;">
-          BLUE WINS! 🏆
+        <div class="halftime-msg" id="winner-announcement" style="color: #ffcc00;">
+          BLUE WIN
         </div>
         <table class="stats-table">
           <thead id="leaderboard-thead">
@@ -2336,8 +2339,9 @@
 
         const roleMessage = document.createElement('div');
         roleMessage.className = 'role-message';
+        roleMessage.id = `role-msg-p${i}`;
         roleMessage.style.color = roleColor;
-        roleMessage.textContent = isSurvival ? 'Stay Alive!' : '👑 왕관을 먹어라!';
+        roleMessage.textContent = isSurvival ? 'Stay Alive!' : '👑 Grab the Crown!';
         col.appendChild(roleMessage);
 
         const body = document.createElement('div');
@@ -3248,14 +3252,27 @@
       const winnerDiv = document.getElementById('winner-announcement');
       
       const winnerPlayer = players.find(p => p.rank === 1);
-      
+
       if (winnerPlayer) {
-        winnerDiv.innerHTML = `🏆 Player ${winnerPlayer.id} Wins!`;
+        winnerDiv.textContent = `P${winnerPlayer.id} WIN`;
         winnerDiv.style.color = winnerPlayer.color;
       } else {
-        winnerDiv.innerHTML = `🤝 Draw! No survivors.`;
+        winnerDiv.textContent = 'DRAW';
         winnerDiv.style.color = '#00c7be';
       }
+
+      // 각 플레이어의 조작칸에도 "Stay Alive!"가 있던 자리에 승/패를 크게 표시한다
+      players.forEach(p => {
+        const roleMsg = document.getElementById(`role-msg-p${p.id}`);
+        if (!roleMsg) return;
+        if (!winnerPlayer) {
+          roleMsg.textContent = 'DRAW';
+        } else if (p.id === winnerPlayer.id) {
+          roleMsg.textContent = 'WIN';
+        } else {
+          roleMsg.textContent = 'LOSE';
+        }
+      });
 
       const sorted = [...players].sort((a, b) => {
         const rA = a.rank || 99;
@@ -3284,15 +3301,28 @@
       setLeaderboardHeader('battle');
       const winnerDiv = document.getElementById('winner-announcement');
       if (winner === 'teamA') {
-        winnerDiv.innerHTML = `🏆 Blue Wins! Crown secured!`;
+        winnerDiv.textContent = 'BLUE WIN';
         winnerDiv.style.color = TEAM_COLORS.teamA.color;
       } else if (winner === 'teamB') {
-        winnerDiv.innerHTML = `🏆 Red Wins! Crown secured!`;
+        winnerDiv.textContent = 'RED WIN';
         winnerDiv.style.color = TEAM_COLORS.teamB.color;
       } else {
-        winnerDiv.innerHTML = `🤝 Draw! Time ran out with no winner.`;
+        winnerDiv.textContent = 'DRAW';
         winnerDiv.style.color = '#00c7be';
       }
+
+      // 각 플레이어의 조작칸에도 "왕관을 먹어라!"가 있던 자리에 승/패를 크게 표시한다
+      players.forEach(p => {
+        const roleMsg = document.getElementById(`role-msg-p${p.id}`);
+        if (!roleMsg) return;
+        if (!winner) {
+          roleMsg.textContent = 'DRAW';
+        } else if (p.team === winner) {
+          roleMsg.textContent = 'WIN';
+        } else {
+          roleMsg.textContent = 'LOSE';
+        }
+      });
 
       const tbody = document.getElementById('leaderboard-body-overlay');
       tbody.innerHTML = '';
