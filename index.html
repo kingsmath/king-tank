@@ -2075,6 +2075,9 @@
           spawnX: 0, spawnY: 0,
           isDead: false,
           respawnTimer: 0,
+          deathTime: 0,
+          timeSinceLastHit: 10000,
+          energyRegenTimer: 0,
           invulnerableTimer: 0,
           reviveReady: false,
           hp: maxHp,
@@ -2161,6 +2164,7 @@
       const radius = 28;
       // 금(gold)을 제외한 나머지 파워업 아이템 중 랜덤 선택
       const keys = ITEM_TYPE_KEYS.filter(k => k !== 'gold');
+      keys.push('heart'); // 하트 아이템이 조금 더 자주 나오도록 추가
       const type = keys[Math.floor(Math.random() * keys.length)];
       items.push({ x, y, radius, type });
     }
@@ -2289,7 +2293,7 @@
     // 격추당한 플레이어는 능력치를 모두 잃고, 보유하고 있던 왕관과 먹었던 아이템들을
     // 죽은 자리 주변에 겹치지 않게 넓게 떨어뜨린다.
     function dropPlayerInventory(p) {
-      const dropTypes = [];
+      const dropTypes = ['heart'];
       const goldCount = p.gold || 0;
       for (let g = 0; g < goldCount; g++) dropTypes.push('gold');
       Object.keys(p.upgrades).forEach(key => {
@@ -2700,6 +2704,9 @@
       p.reviveReady = false;
       p.x = p.spawnX;
       p.y = p.spawnY;
+      p.deathTime = 0;
+      p.timeSinceLastHit = 10000;
+      p.energyRegenTimer = 0;
 
       if (gameMode === 'survival') {
         p.angle = -Math.PI / 2;
@@ -2752,6 +2759,7 @@
       // 2. Timers: respawn / invuln / fire flash / energy regen + auto fire
       players.forEach(p => {
         if (p.isDead) {
+          p.deathTime = (p.deathTime || 0) + dt;
           if (gameMode === 'battle') {
             p.respawnTimer -= dt;
             if (p.respawnTimer <= 0) {
@@ -2768,6 +2776,22 @@
         }
         if (p.fireFlashTimer > 0) p.fireFlashTimer -= dt;
         if (p.hitFlashTimer > 0) p.hitFlashTimer -= dt;
+
+        // 10초간 공격받지 않으면 에너지가 3초에 +1씩 생김
+        p.timeSinceLastHit = (p.timeSinceLastHit || 0) + dt;
+        if (p.timeSinceLastHit >= 10000) {
+          if (!p.energyRegenTimer) p.energyRegenTimer = 0;
+          p.energyRegenTimer += dt;
+          if (p.energyRegenTimer >= 3000) {
+            p.energyRegenTimer -= 3000;
+            if (p.upgrades.energy < MAX_UPGRADE_STACK) {
+              p.upgrades.energy += 1;
+              spawnFloatingText(p.x, p.y - 24, "🔋 +1", p.color);
+            }
+          }
+        } else {
+          p.energyRegenTimer = 0;
+        }
 
         const regenPerMs = (100 / FIRE_INTERVAL_BASE) * (1 + ENERGY_STACK_BONUS * p.upgrades.energy);
         p.energy += dt * regenPerMs;
@@ -2949,6 +2973,8 @@
               dead = true;
               p.hp -= m.power;
               p.hitFlashTimer = 150;
+              p.timeSinceLastHit = 0;
+              p.energyRegenTimer = 0;
               if (p.hp <= 0) {
                 p.isDead = true;
                 p.reviveReady = false;
@@ -3036,6 +3062,8 @@
               p._zoneDamageTimer = 0;
               p.hp = Math.max(0, p.hp - 1.0);
               p.hitFlashTimer = 150;
+              p.timeSinceLastHit = 0;
+              p.energyRegenTimer = 0;
               spawnParticles(p.x, p.y, 4, 'hit');
               sound.playBaseHit();
 
@@ -3351,22 +3379,24 @@
       const identityColor = (gameMode === 'battle') ? TEAM_COLORS[p.team].color : p.color;
 
       if (p.isDead) {
-        ctx.save();
-        ctx.font = '30px "Segoe UI Emoji", "Apple Color Emoji", Arial, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.globalAlpha = 0.85;
-        ctx.fillText('💥', p.x, p.y);
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = '#ff2d55';
-        ctx.font = 'bold 11px Orbitron';
-        if (gameMode === 'survival' && p.reviveReady) {
-          ctx.fillText(`P${p.id} Wait to Revive`, p.x, p.y - 30);
-        } else {
-          const rem = Math.ceil(p.respawnTimer / 1000);
-          ctx.fillText(`P${p.id} Revive in ${rem}s`, p.x, p.y - 30);
+        if ((p.deathTime || 0) < 5000) {
+          ctx.save();
+          ctx.font = '30px "Segoe UI Emoji", "Apple Color Emoji", Arial, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.globalAlpha = 0.85;
+          ctx.fillText('💥', p.x, p.y);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = '#ff2d55';
+          ctx.font = 'bold 11px Orbitron';
+          if (gameMode === 'survival' && p.reviveReady) {
+            ctx.fillText(`P${p.id} Wait to Revive`, p.x, p.y - 30);
+          } else {
+            const rem = Math.ceil(p.respawnTimer / 1000);
+            ctx.fillText(`P${p.id} Revive in ${rem}s`, p.x, p.y - 30);
+          }
+          ctx.restore();
         }
-        ctx.restore();
         return;
       }
 
